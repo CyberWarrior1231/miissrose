@@ -52,6 +52,13 @@ All required commands are implemented:
 - `.whitelist [reply/user_id]`
 - `.unwhitelist [reply/user_id]`
 
+### Private DM Control Center
+- `/start`, `/help`, `/commands`, `/admin` in private chat
+- Admin panel buttons for broadcast, welcome editing, filter toggle, and stats
+- Broadcast targets all tracked groups
+- Welcome template preview with variables: `{first}`, `{username}`, `{chat}`
+- Group-only moderation flow (DM ignores moderation commands)
+
 ### Auto Moderation & Security
 - Anti-spam
 - Anti-flood
