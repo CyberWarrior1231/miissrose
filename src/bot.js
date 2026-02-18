@@ -5,6 +5,7 @@ const autoModeration = require('./middleware/autoModeration');
 const registerAdminCommands = require('./handlers/adminCommands');
 const registerFilterHandler = require('./handlers/filterHandler');
 const registerServiceHandler = require('./handlers/serviceHandler');
+const registerPrivatePanelHandler = require('./handlers/privatePanelHandler');
 
 if (!botToken) {
   throw new Error('BOT_TOKEN is required');
@@ -16,6 +17,7 @@ function createBot() {
   bot.use(groupContext);
   bot.use(autoModeration);
 
+  registerPrivatePanelHandler(bot);
   registerServiceHandler(bot);
   registerAdminCommands(bot);
   registerFilterHandler(bot);
