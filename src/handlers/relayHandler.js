@@ -69,7 +69,14 @@ async function handleRemoteReply(ctx) {
   if (!mapping) return;
 
   if (ctx.message.text) {
-    await ctx.telegram.sendMessage(mapping.originalChatId, ctx.message.text, { reply_to_message_id: mapping.originalMessageId }).catch(() => {});
+    const rawText = ctx.message.text.trim();
+    const textToSend = rawText.toLowerCase().startsWith('.relay')
+      ? rawText.replace(/^\.relay\s*/i, '').trim()
+      : rawText;
+
+    if (!textToSend) return;
+
+    await ctx.telegram.sendMessage(mapping.originalChatId, textToSend, { reply_to_message_id: mapping.originalMessageId }).catch(() => {});
     return;
   }
 
