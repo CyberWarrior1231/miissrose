@@ -28,9 +28,9 @@ All required commands are implemented:
 - `.warnings [user_id]`
 - `.purge [reply]`
 - `.del [reply]`
-- `.lock [permission]`
-- `.unlock [permission]`
-  - supported: stickers, gifs, photos, videos, links, voice, documents, polls
+- `.lock [permission|all]`
+- `.unlock [permission|all]`
+  - supported: stickers, gifs, photos, videos, links, voice, documents, polls, all
 - `.admins`
 - `.bots`
 - `.users`
@@ -49,8 +49,9 @@ All required commands are implemented:
 ### Extra Operational Commands
 - `.setlog [channel_id]` (optional log channel per group)
 - `.clearlog`
-- `.whitelist [reply/user_id]`
-- `.unwhitelist [reply/user_id]`
+- `.whitelist [reply/user_id/@username]`
+- `.unwhitelist [reply/user_id/@username]`
+- `.id [reply/user_id/@username]`
 
 ### Private DM Control Center
 - `/start`, `/help`, `/commands`, `/admin` in private chat
