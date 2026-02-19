@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const { writeLog } = require('../utils/logger');
 const { floodWindowMs, floodMessageLimit } = require('../config');
+const { isAdmin } = require('../utils/permissions');
 
 const floodTracker = new Map();
 
@@ -11,7 +12,20 @@ function containsLinkInEntities(entities = []) {
 function containsLink(message = {}) {
   const text = message.text || message.caption || '';
   const entityHit = containsLinkInEntities(message.entities || []) || containsLinkInEntities(message.caption_entities || []);
-  return entityHit || /(https?:\/\/|t\.me\/|telegram\.me\/|www\.)/i.test(text);
+ return entityHit || /(https?:\/\/|t\.me|telegram\.me\/|www\.)/i.test(text);
+}
+
+function isLockedContent(message = {}, locks = {}) {
+  return {
+    links: Boolean(locks.links && containsLink(message)),
+    photos: Boolean(locks.photos && message.photo),
+    videos: Boolean(locks.videos && (message.video || message.video_note)),
+    voice: Boolean(locks.voice && (message.voice || message.audio)),
+    gifs: Boolean(locks.gifs && message.animation),
+    stickers: Boolean(locks.stickers && message.sticker),
+    documents: Boolean(locks.documents && message.document),
+    polls: Boolean(locks.polls && message.poll)
+  };
 }
 
 module.exports = async (ctx, next) => {
@@ -33,10 +47,12 @@ module.exports = async (ctx, next) => {
 
   if (ctx.group.whitelistUsers.includes(from.id) || user.isWhitelisted) return next();
 
+  const userIsAdmin = await isAdmin(ctx, from.id);
+  
   const text = ctx.message.text || ctx.message.caption || '';
   const lower = text.toLowerCase();
 
-  if ((ctx.group.antiLinkEnabled || ctx.group.locks.links) && containsLink(ctx.message)) {
+   if (!userIsAdmin && (ctx.group.antiLinkEnabled || ctx.group.locks.links) && containsLink(ctx.message)) {
     await ctx.deleteMessage().catch(() => {});
     await writeLog(ctx, ctx.group, 'anti_link_delete', {
       targetId: from.id,
@@ -72,19 +88,13 @@ module.exports = async (ctx, next) => {
     return;
   }
 
-  const lockHit = (
-    (ctx.group.locks.photos && ctx.message.photo) ||
-    (ctx.group.locks.videos && (ctx.message.video || ctx.message.video_note)) ||
-    (ctx.group.locks.documents && ctx.message.document) ||
-    (ctx.group.locks.voice && (ctx.message.voice || ctx.message.audio)) ||
-    (ctx.group.locks.polls && ctx.message.poll) ||
-    (ctx.group.locks.stickers && ctx.message.sticker) ||
-    (ctx.group.locks.gifs && (ctx.message.animation || (ctx.message.document && ctx.message.document.mime_type === 'video/mp4')))
-  );
+  const lockMatches = isLockedContent(ctx.message, ctx.group.locks || {});
+  const lockHit = Object.values(lockMatches).some(Boolean);
 
-  if (lockHit) {
+   if (!userIsAdmin && lockHit) {
     await ctx.deleteMessage().catch(() => {});
-    await writeLog(ctx, ctx.group, 'locked_content_delete', { targetId: from.id });
+    const lockType = Object.entries(lockMatches).find(([, matched]) => matched)?.[0] || 'unknown';
+    await writeLog(ctx, ctx.group, 'locked_content_delete', { targetId: from.id, reason: `${lockType} locked` });
     return;
   }
 
