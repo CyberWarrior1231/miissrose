@@ -68,7 +68,7 @@ module.exports = async (ctx, next) => {
 
   const lockHit = (
     (ctx.group.locks.photos && ctx.message.photo) ||
-    (ctx.group.locks.videos && ctx.message.video) ||
+    (ctx.group.locks.videos && (ctx.message.video || ctx.message.video_note)) ||
     (ctx.group.locks.documents && ctx.message.document) ||
     (ctx.group.locks.voice && (ctx.message.voice || ctx.message.audio)) ||
     (ctx.group.locks.polls && ctx.message.poll) ||
