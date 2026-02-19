@@ -4,8 +4,14 @@ const { floodWindowMs, floodMessageLimit } = require('../config');
 
 const floodTracker = new Map();
 
-function containsLink(text = '') {
-  return /(https?:\/\/|t\.me\/|telegram\.me\/|www\.)/i.test(text);
+function containsLinkInEntities(entities = []) {
+  return entities.some((entity) => ['url', 'text_link'].includes(entity.type));
+}
+
+function containsLink(message = {}) {
+  const text = message.text || message.caption || '';
+  const entityHit = containsLinkInEntities(message.entities || []) || containsLinkInEntities(message.caption_entities || []);
+  return entityHit || /(https?:\/\/|t\.me\/|telegram\.me\/|www\.)/i.test(text);
 }
 
 module.exports = async (ctx, next) => {
@@ -30,7 +36,7 @@ module.exports = async (ctx, next) => {
   const text = ctx.message.text || ctx.message.caption || '';
   const lower = text.toLowerCase();
 
-  if ((ctx.group.antiLinkEnabled || ctx.group.locks.links) && containsLink(text)) {
+  if ((ctx.group.antiLinkEnabled || ctx.group.locks.links) && containsLink(ctx.message)) {
     await ctx.deleteMessage().catch(() => {});
     await writeLog(ctx, ctx.group, 'anti_link_delete', {
       targetId: from.id,
