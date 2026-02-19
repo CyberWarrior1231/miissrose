@@ -6,6 +6,11 @@ const { writeLog } = require('../utils/logger');
 const { defaultWarningLimit, captchaTimeoutSeconds } = require('../config');
 
 const supportedLocks = ['stickers', 'gifs', 'photos', 'videos', 'links', 'voice', 'documents', 'polls'];
+const lockAliases = {
+  photo: 'photos',
+  link: 'links',
+  voices: 'voice'
+};
 
 function escapeRegExp(input = '') {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -423,12 +428,6 @@ module.exports = (bot) => {
         await ctx.reply(`❌ Mute failed: ${extractApiErrorMessage(muteResult.error)}`);
         return;
       }
-      
-      await User.findOneAndUpdate(
-        { chatId: ctx.chat.id, userId: target.id },
-        { mutedUntil: duration ? new Date(Date.now() + duration * 1000) : null },
-        { upsert: true }
-      );
 
       await ctx.reply(styledActionMessage({
         title: '🔇 User Muted',
@@ -438,7 +437,12 @@ module.exports = (bot) => {
         admin: actor
       }), { parse_mode: 'HTML' });
       await ctx.reply(`✅ Successfully restricted ${mentionUser(target)}.`, { parse_mode: 'HTML' });
-      await writeLog(ctx, ctx.group, 'mute', { targetId: target.id, reason: duration ? `for ${duration}s` : 'indefinite' });
+      await User.findOneAndUpdate(
+        { chatId: ctx.chat.id, userId: target.id },
+        { mutedUntil: duration ? new Date(Date.now() + duration * 1000) : null },
+        { upsert: true }
+      ).catch(() => {});
+      await writeLog(ctx, ctx.group, 'mute', { targetId: target.id, reason: duration ? `for ${duration}s` : 'indefinite' }).catch(() => {});
       return;
     }
 
@@ -455,8 +459,6 @@ module.exports = (bot) => {
         return;
       }
 
-      await User.findOneAndUpdate({ chatId: ctx.chat.id, userId: target.id }, { mutedUntil: null }, { upsert: true });
-
       await ctx.reply(styledActionMessage({
         title: '🔊 User Unmuted',
         user: mentionUser(target),
@@ -464,7 +466,8 @@ module.exports = (bot) => {
         admin: actor
       }), { parse_mode: 'HTML' });
       await ctx.reply(`✅ Successfully unrestricted ${mentionUser(target)}.`, { parse_mode: 'HTML' });
-      await writeLog(ctx, ctx.group, 'unmute', { targetId: target.id });
+      await User.findOneAndUpdate({ chatId: ctx.chat.id, userId: target.id }, { mutedUntil: null }, { upsert: true }).catch(() => {});
+      await writeLog(ctx, ctx.group, 'unmute', { targetId: target.id }).catch(() => {});
       return;
     }
 
@@ -521,7 +524,8 @@ module.exports = (bot) => {
     }
 
     if (cmd === '.lock' || cmd === '.unlock') {
-      const lock = (args[0] || '').toLowerCase();
+      const requestedLock = (args[0] || '').toLowerCase();
+      const lock = lockAliases[requestedLock] || requestedLock;
       const lockAll = lock === 'all';
       if (!lockAll && !supportedLocks.includes(lock)) return ctx.reply(commandUsage(cmd));
 
