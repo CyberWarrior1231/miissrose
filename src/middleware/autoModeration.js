@@ -30,9 +30,12 @@ module.exports = async (ctx, next) => {
   const text = ctx.message.text || ctx.message.caption || '';
   const lower = text.toLowerCase();
 
-  if (ctx.group.antiLinkEnabled && containsLink(text)) {
+  if ((ctx.group.antiLinkEnabled || ctx.group.locks.links) && containsLink(text)) {
     await ctx.deleteMessage().catch(() => {});
-    await writeLog(ctx, ctx.group, 'anti_link_delete', { targetId: from.id, reason: 'Link blocked' });
+    await writeLog(ctx, ctx.group, 'anti_link_delete', {
+      targetId: from.id,
+      reason: ctx.group.locks.links ? 'Link blocked by lock' : 'Link blocked'
+    });
     return;
   }
 
