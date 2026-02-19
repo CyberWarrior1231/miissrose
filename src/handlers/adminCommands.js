@@ -48,30 +48,66 @@ function styledActionMessage({ title, user, duration, chatName, admin, detail })
 }
 
 async function resolveTarget(ctx, args) {
-  if (ctx.message.reply_to_message?.from) return ctx.message.reply_to_message.from;
-  if (!args[0]) return null;
-  const id = Number(args[0]);
-  if (!Number.isNaN(id)) return { id, first_name: String(id) };
-  return null;
+  if (ctx.message.reply_to_message?.from) {
+    return { target: ctx.message.reply_to_message.from, consumedArgs: 0 };
+  }
+
+  const rawTarget = args[0];
+  if (!rawTarget) return { target: null, consumedArgs: 0 };
+
+  const id = Number(rawTarget);
+  if (!Number.isNaN(id)) {
+    return { target: { id, first_name: String(id) }, consumedArgs: 1 };
+  }
+
+  if (rawTarget.startsWith('@')) {
+    const username = rawTarget.slice(1).toLowerCase();
+    if (!username) return { target: null, consumedArgs: 0 };
+    const knownUser = await User.findOne({ chatId: ctx.chat.id, username: new RegExp(`^${username}$`, 'i') });
+    if (!knownUser) return { target: null, consumedArgs: 0 };
+
+    return {
+      target: {
+        id: knownUser.userId,
+        username: knownUser.username,
+        first_name: knownUser.firstName || knownUser.username || String(knownUser.userId)
+      },
+      consumedArgs: 1
+    };
+  }
+
+  return { target: null, consumedArgs: 0 };
+}
+
+function userInfoMessage(user, chat) {
+  return [
+    '🪪 <b>User Information</b>',
+    `👤 Name: ${(user.first_name || user.firstName || '')} ${(user.last_name || user.lastName || '')}`.trim(),
+    `🆔 User ID: <code>${user.id || user.userId}</code>`,
+    `🔗 Username: ${user.username ? `@${user.username}` : 'Not set'}`,
+    `🤖 Bot: ${user.is_bot ? 'Yes' : 'No'}`,
+    `📍 Chat ID: <code>${chat.id}</code>`,
+    `🏠 Chat: ${chat.title || chat.id}`
+  ].join('\n');
 }
 
 function commandUsage(cmd) {
   const usageMap = {
-    '.ban': 'Usage: .ban [reply/user_id]',
-    '.unban': 'Usage: .unban [user_id]',
-    '.kick': 'Usage: .kick [reply/user_id]',
-    '.promote': 'Usage: .promote [reply/user_id] [role]',
-    '.demote': 'Usage: .demote [reply/user_id]',
+    '.ban': 'Usage: .ban [reply/user_id/@username]',
+    '.unban': 'Usage: .unban [reply/user_id/@username]',
+    '.kick': 'Usage: .kick [reply/user_id/@username]',
+    '.promote': 'Usage: .promote [reply/user_id/@username] [role]',
+    '.demote': 'Usage: .demote [reply/user_id/@username]',
     '.pin': 'Usage: Reply to a message with .pin',
     '.unpin': 'Usage: Reply to a message with .unpin',
-    '.mute': 'Usage: .mute [reply/user_id] [1m|1h|1d] (duration optional)',
-    '.unmute': 'Usage: .unmute [reply/user_id]',
-    '.warn': 'Usage: .warn [reply/user_id]',
-    '.warnings': 'Usage: .warnings [reply/user_id]',
+    '.mute': 'Usage: .mute [reply/user_id/@username] [1m|1h|1d] (duration optional)',
+    '.unmute': 'Usage: .unmute [reply/user_id/@username]',
+    '.warn': 'Usage: .warn [reply/user_id/@username]',
+    '.warnings': 'Usage: .warnings [reply/user_id/@username]',
     '.purge': 'Usage: .purge [reply to first message]',
     '.del': 'Usage: .del [reply]',
-    '.lock': `Usage: .lock [${supportedLocks.join('|')}]`,
-    '.unlock': `Usage: .unlock [${supportedLocks.join('|')}]`,
+    '.lock': `Usage: .lock [${supportedLocks.join('|')}|all]`,
+    '.unlock': `Usage: .unlock [${supportedLocks.join('|')}|all]`,
     '.delservice': 'Usage: .delservice [on/off]',
     '.keepservice': 'Usage: .keepservice [service_type]',
     '.settitle': 'Usage: .settitle [new_title]',
@@ -80,8 +116,9 @@ function commandUsage(cmd) {
     '.filter': 'Usage: .filter [trigger] [response]',
     '.stop': 'Usage: .stop [trigger]',
     '.setlog': 'Usage: .setlog [channel_id]',
-    '.whitelist': 'Usage: .whitelist [reply/user_id]',
-    '.unwhitelist': 'Usage: .unwhitelist [reply/user_id]'
+    '.whitelist': 'Usage: .whitelist [reply/user_id/@username]',
+    '.unwhitelist': 'Usage: .unwhitelist [reply/user_id/@username]',
+    '.id': 'Usage: .id [reply/user_id/@username]'
   };
   return usageMap[cmd] || 'Please check your command format and try again.';
 }
@@ -127,8 +164,14 @@ module.exports = (bot) => {
     const actor = mentionUser(ctx.from);
     const chatName = ctx.chat.title || 'this group';
     
+    if (cmd === '.id') {
+      const { target } = await resolveTarget(ctx, args);
+      const subject = target || ctx.from;
+      return ctx.reply(userInfoMessage(subject, ctx.chat), { parse_mode: 'HTML' });
+    }
+    
     if (cmd === '.ban') {
-      const target = await resolveTarget(ctx, args);
+      const { target } = await resolveTarget(ctx, args);
       if (!target) return ctx.reply(commandUsage(cmd));
       await ctx.banChatMember(target.id).catch(() => {});
       await ctx.reply(styledActionMessage({
@@ -142,22 +185,21 @@ module.exports = (bot) => {
     }
 
     if (cmd === '.unban') {
-      const id = Number(args[0]);
-      if (!id) return ctx.reply(commandUsage(cmd));
-      const target = { id, first_name: String(id) };
-      await ctx.unbanChatMember(id).catch(() => {});
+      const { target } = await resolveTarget(ctx, args);
+      if (!target) return ctx.reply(commandUsage(cmd));
+      await ctx.unbanChatMember(target.id).catch(() => {});
       await ctx.reply(styledActionMessage({
         title: '✅ User Unbanned',
         user: mentionUser(target),
         chatName,
         admin: actor
       }), { parse_mode: 'HTML' });
-      await writeLog(ctx, ctx.group, 'unban', { targetId: id });
+      await writeLog(ctx, ctx.group, 'unban', { targetId: target.id });
       return;
     }
 
     if (cmd === '.kick') {
-      const target = await resolveTarget(ctx, args);
+      const { target } = await resolveTarget(ctx, args);
       if (!target) return ctx.reply(commandUsage(cmd));
       await ctx.banChatMember(target.id).catch(() => {});
       await ctx.unbanChatMember(target.id).catch(() => {});
@@ -172,10 +214,11 @@ module.exports = (bot) => {
     }
 
     if (cmd === '.promote') {
-      const target = await resolveTarget(ctx, args);
-      const role = args.slice(1).join(' ') || undefined;
+      const { target, consumedArgs } = await resolveTarget(ctx, args);
+      const role = args.slice(consumedArgs).join(' ') || undefined;
       if (!target) return ctx.reply(commandUsage(cmd));
-      await ctx.promoteChatMember(target.id, {
+
+      const promoted = await ctx.telegram.promoteChatMember(ctx.chat.id, target.id, {
         can_manage_chat: true,
         can_delete_messages: true,
         can_manage_video_chats: true,
@@ -186,7 +229,12 @@ module.exports = (bot) => {
         can_post_stories: true,
         can_edit_stories: true,
         can_delete_stories: true
-      }).catch(() => {});
+      }).then(() => true).catch(() => false);
+
+      if (!promoted) {
+        return ctx.reply('⚠️ Promotion failed. Please check my admin rights and target validity.');
+      }
+
       if (role) await ctx.setChatAdministratorCustomTitle(target.id, role).catch(() => {});
       await ctx.reply(styledActionMessage({
         title: '🆙 User Promoted',
@@ -199,9 +247,10 @@ module.exports = (bot) => {
     }
 
     if (cmd === '.demote') {
-      const target = await resolveTarget(ctx, args);
+       const { target } = await resolveTarget(ctx, args);
       if (!target) return ctx.reply(commandUsage(cmd));
-      await ctx.promoteChatMember(target.id, {
+
+      const demoted = await ctx.telegram.promoteChatMember(ctx.chat.id, target.id, {
         can_manage_chat: false,
         can_delete_messages: false,
         can_manage_video_chats: false,
@@ -212,7 +261,12 @@ module.exports = (bot) => {
         can_post_stories: false,
         can_edit_stories: false,
         can_delete_stories: false
-      }).catch(() => {});
+      }).then(() => true).catch(() => false);
+
+      if (!demoted) {
+        return ctx.reply('⚠️ Demotion failed. Please ensure target is an admin and I have full admin rights.');
+      }
+      
       await ctx.reply(styledActionMessage({
         title: '🔽 User Demoted',
         user: mentionUser(target),
@@ -222,7 +276,7 @@ module.exports = (bot) => {
       return;
     }
 
-    if (cmd === '.roles') return ctx.reply('💡 Usage: .promote [reply/user_id] [role]\nRole sets a custom admin title.');
+    if (cmd === '.roles') return ctx.reply('💡 Usage: .promote [reply/user_id/@username] [role]\nRole sets a custom admin title.');
 
     if (cmd === '.pin') {
       if (!ctx.message.reply_to_message) return ctx.reply(commandUsage(cmd));
@@ -244,9 +298,9 @@ module.exports = (bot) => {
     }
 
     if (cmd === '.mute') {
-      const target = await resolveTarget(ctx, args);
+      const { target, consumedArgs } = await resolveTarget(ctx, args);
       if (!target) return ctx.reply(commandUsage(cmd));
-      const duration = parseDuration(args[1]);
+      const duration = parseDuration(args[consumedArgs]);
       const untilDate = duration ? Math.floor((Date.now() + duration * 1000) / 1000) : 0;
 
       await ctx.restrictChatMember(target.id, { can_send_messages: false }, { until_date: untilDate }).catch(() => {});
@@ -264,11 +318,12 @@ module.exports = (bot) => {
         admin: actor
       }), { parse_mode: 'HTML' });
       await writeLog(ctx, ctx.group, 'mute', { targetId: target.id, reason: duration ? `for ${duration}s` : 'indefinite' });
+      await ctx.reply('✅ Mute confirmed. Moderation action applied successfully.');
       return;
     }
 
     if (cmd === '.unmute') {
-      const target = await resolveTarget(ctx, args);
+      const { target } = await resolveTarget(ctx, args);
       if (!target) return ctx.reply(commandUsage(cmd));
       
       await ctx.restrictChatMember(target.id, {
@@ -287,11 +342,12 @@ module.exports = (bot) => {
         admin: actor
       }), { parse_mode: 'HTML' });
       await writeLog(ctx, ctx.group, 'unmute', { targetId: target.id });
+      await ctx.reply('✅ Unmute confirmed. User can speak again.');
       return;
     }
 
     if (cmd === '.warn') {
-      const target = await resolveTarget(ctx, args);
+      const { target } = await resolveTarget(ctx, args);
       if (!target) return ctx.reply(commandUsage(cmd));
       const user = await User.findOneAndUpdate(
         { chatId: ctx.chat.id, userId: target.id },
@@ -316,7 +372,7 @@ module.exports = (bot) => {
     }
 
     if (cmd === '.warnings') {
-      const target = await resolveTarget(ctx, args);
+      const { target } = await resolveTarget(ctx, args);
       if (!target) return ctx.reply(commandUsage(cmd));
       const user = await User.findOne({ chatId: ctx.chat.id, userId: target.id });
       return ctx.reply(`📊 Warnings for ${mentionUser(target)}: ${user?.warnings || 0}/${defaultWarningLimit}`, { parse_mode: 'HTML' });
@@ -344,12 +400,18 @@ module.exports = (bot) => {
 
     if (cmd === '.lock' || cmd === '.unlock') {
       const lock = (args[0] || '').toLowerCase();
-      if (!supportedLocks.includes(lock)) return ctx.reply(commandUsage(cmd));
-      ctx.group.locks[lock] = cmd === '.lock';
+       const lockAll = lock === 'all';
+      if (!lockAll && !supportedLocks.includes(lock)) return ctx.reply(commandUsage(cmd));
+
+      const nextState = cmd === '.lock';
+      const targets = lockAll ? supportedLocks : [lock];
+      for (const lockType of targets) {
+        ctx.group.locks[lockType] = nextState;
+      }
       await ctx.group.save();
       await ctx.reply(styledActionMessage({
-        title: `${cmd === '.lock' ? '🔒 Lock Enabled' : '🔓 Lock Disabled'}`,
-        user: `Content: ${lock}`,
+        title: `${nextState ? '🔒 Lock Enabled' : '🔓 Lock Disabled'}`,
+        user: `Content: ${lockAll ? 'all permissions' : lock}`,
         chatName,
         admin: actor
       }), { parse_mode: 'HTML' });
@@ -495,7 +557,7 @@ module.exports = (bot) => {
     }
 
     if (cmd === '.whitelist' || cmd === '.unwhitelist') {
-      const target = await resolveTarget(ctx, args);
+      const { target } = await resolveTarget(ctx, args);
       if (!target) return ctx.reply(commandUsage(cmd));
       const isAdd = cmd === '.whitelist';
       if (isAdd && !ctx.group.whitelistUsers.includes(target.id)) ctx.group.whitelistUsers.push(target.id);
@@ -505,7 +567,7 @@ module.exports = (bot) => {
       return ctx.reply(`${isAdd ? '✅ Whitelisted' : '❎ Removed from whitelist'} ${mentionUser(target)}`, { parse_mode: 'HTML' });
     }
 
-    return ctx.reply('ℹ️ I couldn’t match that command. Open /start in DM for guidance.');
+    return ctx.reply('ℹ️ MissLily could not match that command. Open /start in DM for the full guidance panel.');
   });
 
   bot.on('new_chat_members', async (ctx) => {
