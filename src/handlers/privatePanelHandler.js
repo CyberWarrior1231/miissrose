@@ -3,6 +3,7 @@ const Group = require('../models/Group');
 const User = require('../models/User');
 const Filter = require('../models/Filter');
 const { mentionUser } = require('../utils/permissions');
+const { ownerId } = require('../config');
 
 const dmState = new Map();
 
@@ -10,21 +11,44 @@ function isPrivate(ctx) {
   return ctx.chat?.type === 'private';
 }
 
-function privateMainKeyboard(isAdminUser) {
-  const rows = [
-    [Markup.button.callback('❓ Help', 'dm:help'), Markup.button.callback('📚 Commands', 'dm:commands')]
-  ];
-  if (isAdminUser) rows.push([Markup.button.callback('🛡 Admin Panel', 'dm:admin')]);
-  return Markup.inlineKeyboard(rows);
+function isOwner(ctx) {
+  return Boolean(ownerId) && ctx.from?.id === ownerId;
+}
+
+function ownerOnlyKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback('🛡 Moderation Help', 'dm:help')],
+    [Markup.button.callback('⚙️ Settings', 'dm:settings')],
+    [Markup.button.callback('📢 Broadcast', 'dm:broadcast')],
+    [Markup.button.callback('📊 Bot Stats', 'dm:stats')]
+  ]);
+}
+
+function userKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback('🛡 Moderation Help', 'dm:help')]
+  ]);
 }
 
 function adminKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback('📣 Broadcast', 'dm:broadcast')],
-    [Markup.button.callback('🎉 Edit Welcome Message', 'dm:welcome')],
-    [Markup.button.callback('🧠 Toggle Filters', 'dm:filters')],
-    [Markup.button.callback('📊 View Stats', 'dm:stats')]
+    [Markup.button.callback('📢 Broadcast', 'dm:broadcast')],
+    [Markup.button.callback('🎉 Welcome Message', 'dm:welcome')],
+    [Markup.button.callback('⚙️ Settings', 'dm:settings')],
+    [Markup.button.callback('📊 Bot Stats', 'dm:stats')]
   ]);
+}
+
+function broadcastDraftKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback('👀 Preview', 'dm:broadcast_preview')],
+    [Markup.button.callback('✅ Send', 'dm:broadcast_send')],
+    [Markup.button.callback('❌ Cancel', 'dm:broadcast_cancel')]
+  ]);
+}
+
+function ownerRestrictedReply(ctx) {
+  return ctx.reply('⛔ This feature is restricted to the bot owner.');
 }
 
 async function getManagedGroups(ctx) {
@@ -50,122 +74,131 @@ function formatWelcomePreview(template, user, groupTitle) {
 module.exports = (bot) => {
   bot.start(async (ctx) => {
     if (!isPrivate(ctx)) return;
-    const managed = await getManagedGroups(ctx);
-    const isAdminUser = managed.length > 0;
-
+    
     await ctx.reply(
-      `🌹 Welcome ${mentionUser(ctx.from)}\n\nI can help you manage your groups in MissRose style.`,
+      [
+        `✨ Welcome ${mentionUser(ctx.from)}`,
+        '',
+        'I’m ready to help you keep your communities safe and smooth.'
+      ].join('\n'),
       {
         parse_mode: 'HTML',
-        ...privateMainKeyboard(isAdminUser)
+        ...(isOwner(ctx) ? ownerOnlyKeyboard() : userKeyboard())
       }
     );
   });
 
   bot.command('help', async (ctx) => {
     if (!isPrivate(ctx)) return;
-    await ctx.reply('🤝 Use /commands for available commands or open the Admin Panel to manage your groups.');
+    await ctx.reply('🛡 Need a hand? Add me to your group and use moderation commands there anytime.');
   });
 
   bot.command('commands', async (ctx) => {
     if (!isPrivate(ctx)) return;
-    await ctx.reply(
-      [
-        '📚 Commands',
-        '• /start - Open DM home',
-        '• /help - Quick guidance',
-        '• /commands - Show this list',
-        '• /admin - Open private admin panel',
-        '',
-        'Group moderation commands stay in groups only (example: .ban, .mute, .warn, .lock).'
-      ].join('\n')
-    );
+    await ctx.reply('🛡 Use /start here for quick access. All moderation actions work directly inside your groups.');
   });
 
   bot.command('admin', async (ctx) => {
     if (!isPrivate(ctx)) return;
-    const managed = await getManagedGroups(ctx);
-    if (!managed.length) {
-      await ctx.reply('🚫 You are not an admin in any tracked group yet.');
-      return;
-    }
+    if (!isOwner(ctx)) return ownerRestrictedReply(ctx);
 
     const allGroupIds = (await Group.find({}, { chatId: 1 })).map((g) => g.chatId);
-    dmState.set(ctx.from.id, { mode: 'idle', managedGroupIds: managed.map((g) => g.chatId), allGroupIds });
-    await ctx.reply('🛡 Admin Panel\nChoose an action:', adminKeyboard());
+    dmState.set(ctx.from.id, { mode: 'idle', allGroupIds, broadcastDraft: '' });
+    await ctx.reply('⚙️ Owner controls are ready.', adminKeyboard());
   });
 
-  bot.action(/^dm:(help|commands|admin|broadcast|welcome|filters|stats)$/, async (ctx) => {
+  bot.action(/^dm:(help|settings|broadcast|welcome|stats|broadcast_preview|broadcast_send|broadcast_cancel)$/, async (ctx) => {
     if (!isPrivate(ctx)) return;
     const action = ctx.match[1];
 
     if (action === 'help') {
       await ctx.answerCbQuery();
-      await ctx.reply('🤝 Need help? Use /commands or open Admin Panel for advanced group controls.');
+      await ctx.reply('🛡 I can assist with bans, mutes, warnings, filters, welcomes, and more from your groups.');
       return;
     }
 
-    if (action === 'commands') {
-      await ctx.answerCbQuery();
-      await ctx.reply('📚 Quick commands: /start, /help, /commands, /admin\nModeration commands work only in groups.');
-      return;
-    }
-
-    const managed = await getManagedGroups(ctx);
-    if (!managed.length) {
-      await ctx.answerCbQuery('No managed groups found.', { show_alert: true });
+    if (!isOwner(ctx)) {
+      await ctx.answerCbQuery('Owner only', { show_alert: true });
+      await ownerRestrictedReply(ctx);
       return;
     }
 
     const allGroupIds = (await Group.find({}, { chatId: 1 })).map((g) => g.chatId);
-    dmState.set(ctx.from.id, { mode: 'idle', managedGroupIds: managed.map((g) => g.chatId), allGroupIds });
-
-    if (action === 'admin') {
+    const current = dmState.get(ctx.from.id) || { mode: 'idle', broadcastDraft: '' };
+    dmState.set(ctx.from.id, { ...current, allGroupIds });
+    
+    if (action === 'settings') {
       await ctx.answerCbQuery();
-      await ctx.reply('🛡 Admin Panel\nChoose an action:', adminKeyboard());
-      return;
-    }
-
-    if (action === 'broadcast') {
-      await ctx.answerCbQuery();
-      dmState.set(ctx.from.id, { mode: 'await_broadcast', managedGroupIds: managed.map((g) => g.chatId), allGroupIds });
-      await ctx.reply('📣 Send the broadcast message now. It will be sent to all managed groups.');
-      return;
-    }
-
-    if (action === 'welcome') {
-      await ctx.answerCbQuery();
-      dmState.set(ctx.from.id, { mode: 'await_welcome', managedGroupIds: managed.map((g) => g.chatId) });
-      await ctx.reply('🎉 Send new welcome template for your groups. Variables: {first} {username} {chat}.\nUse [Button Text](https://example.com) on separate lines for buttons.');
-      return;
-    }
-
-    if (action === 'filters') {
-      await ctx.answerCbQuery();
-      let updated = 0;
-      for (const group of managed) {
-        group.antiSpamEnabled = !group.antiSpamEnabled;
-        // eslint-disable-next-line no-await-in-loop
-        await group.save();
-        updated += 1;
-      }
-      await ctx.reply(`🧠 Filters toggled for ${updated} groups (anti-spam switched).`);
+      const managed = await getManagedGroups(ctx);
+      await ctx.reply(`⚙️ Settings\n\nConnected groups: ${managed.length}`);
       return;
     }
 
     if (action === 'stats') {
       await ctx.answerCbQuery();
-      const groupIds = managed.map((g) => g.chatId);
-      const usersTracked = await User.countDocuments({ chatId: { $in: groupIds } });
-      const filters = await Filter.countDocuments({ chatId: { $in: groupIds } });
-      await ctx.reply(
-        [
-          '📊 Admin Stats',
-          `• Managed groups: ${managed.length}`,
-          `• Tracked users: ${usersTracked}`,
-          `• Active filters: ${filters}`
-        ].join('\n')
-      );
+      const usersTracked = await User.countDocuments({});
+      const filters = await Filter.countDocuments({});
+      await ctx.reply([
+        '📊 Bot Stats',
+        `• Groups: ${allGroupIds.length}`,
+        `• Tracked members: ${usersTracked}`,
+        `• Active filters: ${filters}`
+      ].join('\n'));
+      return;
+    }
+
+    
+    if (action === 'welcome') {
+      await ctx.answerCbQuery();
+      dmState.set(ctx.from.id, { ...current, mode: 'await_welcome', allGroupIds });
+      await ctx.reply('🎉 Send the new welcome text. Use {first}, {username}, and {group}.');
+      return;
+    }
+
+    if (action === 'broadcast') {
+      await ctx.answerCbQuery();
+      dmState.set(ctx.from.id, { ...current, mode: 'await_broadcast', allGroupIds });
+      await ctx.reply('📢 Send the message you want to broadcast.', broadcastDraftKeyboard());
+      return;
+    }
+
+    if (action === 'broadcast_preview') {
+      await ctx.answerCbQuery();
+      const state = dmState.get(ctx.from.id);
+      if (!state?.broadcastDraft) {
+        await ctx.reply('⚠️ No draft yet. Send a message first.');
+        return;
+      }
+      await ctx.reply('👀 Broadcast Preview');
+      await ctx.reply(state.broadcastDraft);
+      return;
+    }
+
+  if (action === 'broadcast_cancel') {
+      await ctx.answerCbQuery();
+      dmState.set(ctx.from.id, { mode: 'idle', allGroupIds, broadcastDraft: '' });
+      await ctx.reply('✅ Broadcast canceled.');
+      return;
+    }
+
+    if (action === 'broadcast_send') {
+      await ctx.answerCbQuery();
+      const state = dmState.get(ctx.from.id);
+      if (!state?.broadcastDraft) {
+        await ctx.reply('⚠️ No draft ready. Send a message first.');
+        return;
+      }
+
+      let delivered = 0;
+      for (const chatId of state.allGroupIds || []) {
+        // eslint-disable-next-line no-await-in-loop
+        const sent = await ctx.telegram.sendMessage(chatId, state.broadcastDraft).then(() => true).catch(() => false);
+        if (sent) delivered += 1;
+      }
+
+      dmState.set(ctx.from.id, { mode: 'idle', allGroupIds, broadcastDraft: '' });
+      await ctx.reply(`✅ Broadcast sent to ${delivered}/${(state.allGroupIds || []).length} groups.`);
+      await ctx.telegram.sendMessage(ctx.from.id, `📝 Broadcast log\nDelivered: ${delivered}/${(state.allGroupIds || []).length}`);
     }
   });
 
@@ -175,44 +208,43 @@ module.exports = (bot) => {
     const state = dmState.get(ctx.from.id);
     if (!state || !state.mode || state.mode === 'idle') return next();
 
-    if (state.mode === 'await_broadcast') {
-      const message = ctx.message.text.trim();
-      if (!message) {
-        await ctx.reply('⚠️ Empty broadcast ignored. Send plain text to continue.');
-        return;
-      }
-
-      let delivered = 0;
-      for (const chatId of state.allGroupIds || []) {
-        // eslint-disable-next-line no-await-in-loop
-        const sent = await ctx.telegram.sendMessage(chatId, `📣 Broadcast\n\n${message}`).then(() => true).catch(() => false);
-        if (sent) delivered += 1;
-      }
-
-      dmState.set(ctx.from.id, { ...state, mode: 'idle' });
-      await ctx.reply(`✅ Broadcast delivered to ${delivered}/${(state.allGroupIds || []).length} groups.`);
+    if (!isOwner(ctx)) {
+      dmState.delete(ctx.from.id);
+      await ownerRestrictedReply(ctx);
       return;
     }
 
     if (state.mode === 'await_welcome') {
       const template = ctx.message.text.trim();
       if (!template) {
-        await ctx.reply('⚠️ Welcome template cannot be empty. Please send text with variables.');
+        await ctx.reply('⚠️ Please send a welcome message.');
         return;
       }
 
       await Group.updateMany(
-        { chatId: { $in: state.managedGroupIds || [] } },
+        { chatId: { $in: state.allGroupIds || [] } },
         { $set: { welcomeMessage: template, welcomeEnabled: true } }
       );
 
       const preview = formatWelcomePreview(template, ctx.from, 'Example Group');
       dmState.set(ctx.from.id, { ...state, mode: 'idle' });
-      await ctx.reply('✅ Welcome message updated for your managed groups. Preview below:', { parse_mode: 'HTML' });
+      await ctx.reply('✅ Welcome message refreshed. Preview:');
       await ctx.reply(preview, { parse_mode: 'HTML' });
       return;
     }
 
+    if (state.mode === 'await_broadcast') {
+      const message = ctx.message.text.trim();
+      if (!message) {
+        await ctx.reply('⚠️ Please send a valid message.');
+        return;
+      }
+
+      dmState.set(ctx.from.id, { ...state, broadcastDraft: message });
+      await ctx.reply('✅ Draft saved. You can preview, send, or cancel.', broadcastDraftKeyboard());
+      return;
+    }
+   
     return next();
   });
 };
