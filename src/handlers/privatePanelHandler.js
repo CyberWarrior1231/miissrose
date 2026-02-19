@@ -17,7 +17,9 @@ function isOwner(ctx) {
 
 function ownerOnlyKeyboard() {
   return Markup.inlineKeyboard([
+    [Markup.button.callback('💬 Remote Group Chat', 'dm:remote_chat')],
     [Markup.button.callback('🛡 Moderation Help', 'dm:help')],
+    [Markup.button.callback('⚙️ Relay Settings', 'dm:relay_settings')],
     [Markup.button.callback('⚙️ Settings', 'dm:settings')],
     [Markup.button.callback('📢 Broadcast', 'dm:broadcast')],
     [Markup.button.callback('📊 Bot Stats', 'dm:stats')]
@@ -26,6 +28,7 @@ function ownerOnlyKeyboard() {
 
 function userKeyboard() {
   return Markup.inlineKeyboard([
+    [Markup.button.callback('💬 Remote Group Chat', 'dm:remote_chat')],
     [Markup.button.callback('🛡 Moderation Help', 'dm:help')]
   ]);
 }
@@ -79,7 +82,8 @@ module.exports = (bot) => {
       [
         `✨ Welcome ${mentionUser(ctx.from)}`,
         '',
-        'I’m ready to help you keep your communities safe and smooth.'
+        'You can monitor and reply to group chats remotely from here.',
+        'Use the controls below to manage relay and moderation operations securely.'
       ].join('\n'),
       {
         parse_mode: 'HTML',
@@ -107,13 +111,29 @@ module.exports = (bot) => {
     await ctx.reply('⚙️ Owner controls are ready.', adminKeyboard());
   });
 
-  bot.action(/^dm:(help|settings|broadcast|welcome|stats|broadcast_preview|broadcast_send|broadcast_cancel)$/, async (ctx) => {
+  bot.action(/^dm:(help|remote_chat|relay_settings|settings|broadcast|welcome|stats|broadcast_preview|broadcast_send|broadcast_cancel)$/, async (ctx) => {
     if (!isPrivate(ctx)) return;
     const action = ctx.match[1];
 
     if (action === 'help') {
       await ctx.answerCbQuery();
       await ctx.reply('🛡 I can assist with bans, mutes, warnings, filters, welcomes, and more from your groups.');
+      return;
+    }
+
+    
+    if (action === 'remote_chat') {
+      await ctx.answerCbQuery();
+      await ctx.reply([
+        '💬 <b>Remote Group Chat</b>',
+        'Relay lets you monitor every group message in private and reply back remotely.',
+        '',
+        'Owner commands:',
+        '• <code>.relay on</code>',
+        '• <code>.relay off</code>',
+        '• <code>.relay private</code>',
+        '• <code>.relay channel &lt;channel_id&gt;</code>'
+      ].join('\n'), { parse_mode: 'HTML' });
       return;
     }
 
@@ -127,6 +147,19 @@ module.exports = (bot) => {
     const current = dmState.get(ctx.from.id) || { mode: 'idle', broadcastDraft: '' };
     dmState.set(ctx.from.id, { ...current, allGroupIds });
     
+    if (action === 'relay_settings') {
+      await ctx.answerCbQuery();
+      await ctx.reply([
+        '⚙️ Relay settings are owner-only.',
+        'Configure relay destination and status with:',
+        '<code>.relay on</code>',
+        '<code>.relay off</code>',
+        '<code>.relay private</code>',
+        '<code>.relay channel &lt;channel_id&gt;</code>'
+      ].join('\n'), { parse_mode: 'HTML' });
+      return;
+    }
+
     if (action === 'settings') {
       await ctx.answerCbQuery();
       const managed = await getManagedGroups(ctx);
