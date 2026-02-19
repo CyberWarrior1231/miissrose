@@ -6,6 +6,7 @@ const registerAdminCommands = require('./handlers/adminCommands');
 const registerFilterHandler = require('./handlers/filterHandler');
 const registerServiceHandler = require('./handlers/serviceHandler');
 const registerPrivatePanelHandler = require('./handlers/privatePanelHandler');
+const registerRelayHandler = require('./handlers/relayHandler');
 
 if (!botToken) {
   throw new Error('BOT_TOKEN is required');
@@ -18,6 +19,7 @@ function createBot() {
   bot.use(autoModeration);
 
   registerPrivatePanelHandler(bot);
+  registerRelayHandler(bot);
   registerServiceHandler(bot);
   registerAdminCommands(bot);
   registerFilterHandler(bot);
