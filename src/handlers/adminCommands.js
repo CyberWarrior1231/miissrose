@@ -31,9 +31,18 @@ function parseWelcomeButtons(raw = '') {
   return buttons.length ? Markup.inlineKeyboard(buttons.map((btn) => [btn])) : null;
 }
 
+function humanizeDuration(seconds) {
+  if (!seconds) return 'until manually unmuted';
+  if (seconds % 86400 === 0) return `${seconds / 86400} day${seconds / 86400 === 1 ? '' : 's'}`;
+  if (seconds % 3600 === 0) return `${seconds / 3600} hour${seconds / 3600 === 1 ? '' : 's'}`;
+  if (seconds % 60 === 0) return `${seconds / 60} minute${seconds / 60 === 1 ? '' : 's'}`;
+  return `${seconds} seconds`;
+}
+
 function styledActionMessage({ title, user, duration, chatName, admin, detail }) {
-  const lines = [title, `👤 ${user}`, `📍 Chat: ${chatName}`, `🛡 By: ${admin}`];
-  if (duration) lines.splice(2, 0, `⏱ Duration: ${duration}`);
+  const lines = [title, `👤 ${user}`];
+  if (duration) lines.push(`⏱ Duration: ${duration}`);
+  lines.push(`📍 Group: ${chatName}`, `🛡 By: ${admin}`);
   if (detail) lines.push(detail);
   return lines.join('\n');
 }
@@ -79,7 +88,7 @@ function commandUsage(cmd) {
 
 async function ensureAdmin(ctx) {
   if (!(await isAdmin(ctx))) {
-    await ctx.reply('🚫 This command is for group admins only.');
+    await ctx.reply('⛔ You need admin rights in this group to use this command.');
     return false;
   }
   return true;
@@ -250,7 +259,7 @@ module.exports = (bot) => {
       await ctx.reply(styledActionMessage({
         title: '🔇 User Muted',
         user: mentionUser(target),
-        duration: duration ? `${args[1]}` : 'until manually unmuted',
+        duration: humanizeDuration(duration),
         chatName,
         admin: actor
       }), { parse_mode: 'HTML' });
@@ -430,7 +439,13 @@ module.exports = (bot) => {
       ctx.group.goodbyeEnabled = state === 'on';
       if (args.slice(1).length) ctx.group.goodbyeMessage = args.slice(1).join(' ');
       await ctx.group.save();
-      return ctx.reply(`👋 Goodbye messages: ${state}`);
+      await ctx.reply(styledActionMessage({
+        title: `👋 Goodbye ${state === 'on' ? 'Enabled' : 'Disabled'}`,
+        user: 'Departing members',
+        chatName,
+        admin: actor
+      }), { parse_mode: 'HTML' });
+      return;
     }
 
     if (cmd === '.filter') {
@@ -457,7 +472,12 @@ module.exports = (bot) => {
       const trigger = (args[0] || '').toLowerCase();
       if (!trigger) return ctx.reply(commandUsage(cmd));
       await Filter.deleteOne({ chatId: ctx.chat.id, trigger });
-      return ctx.reply(`🧹 Filter removed: ${trigger}`);
+      return ctx.reply(styledActionMessage({
+        title: '🧹 Filter Removed',
+        user: trigger,
+        chatName,
+        admin: actor
+      }), { parse_mode: 'HTML' });
     }
 
     if (cmd === '.setlog') {
@@ -485,7 +505,7 @@ module.exports = (bot) => {
       return ctx.reply(`${isAdd ? '✅ Whitelisted' : '❎ Removed from whitelist'} ${mentionUser(target)}`, { parse_mode: 'HTML' });
     }
 
-    return ctx.reply('🤖 I do not recognize that command. Try /help in DM for command guidance.');
+    return ctx.reply('ℹ️ I couldn’t match that command. Open /start in DM for guidance.');
   });
 
   bot.on('new_chat_members', async (ctx) => {
