@@ -415,13 +415,13 @@ module.exports = (bot) => {
       const duration = parseDuration(args[consumedArgs]);
       const untilDate = duration ? Math.floor((Date.now() + duration * 1000) / 1000) : 0;
 
-      await ctx.restrictChatMember(target.id, { can_send_messages: false }, { until_date: untilDate }).catch(() => {});
       const muteResult = await ctx.restrictChatMember(target.id, { can_send_messages: false }, { until_date: untilDate })
         .then(() => ({ ok: true }))
         .catch((error) => ({ ok: false, error }));
 
       if (!muteResult.ok) {
-        return ctx.reply(`❌ Mute failed: ${extractApiErrorMessage(muteResult.error)}`);
+        await ctx.reply(`❌ Mute failed: ${extractApiErrorMessage(muteResult.error)}`);
+        return;
       }
       
       await User.findOneAndUpdate(
@@ -437,6 +437,7 @@ module.exports = (bot) => {
         chatName,
         admin: actor
       }), { parse_mode: 'HTML' });
+      await ctx.reply(`✅ Successfully restricted ${mentionUser(target)}.`, { parse_mode: 'HTML' });
       await writeLog(ctx, ctx.group, 'mute', { targetId: target.id, reason: duration ? `for ${duration}s` : 'indefinite' });
       return;
     }
@@ -450,7 +451,8 @@ module.exports = (bot) => {
         .catch((error) => ({ ok: false, error }));
 
       if (!unmuteResult.ok) {
-        return ctx.reply(`❌ Unmute failed: ${extractApiErrorMessage(unmuteResult.error)}`);
+        await ctx.reply(`❌ Unmute failed: ${extractApiErrorMessage(unmuteResult.error)}`);
+        return;
       }
 
       await User.findOneAndUpdate({ chatId: ctx.chat.id, userId: target.id }, { mutedUntil: null }, { upsert: true });
@@ -461,6 +463,7 @@ module.exports = (bot) => {
         chatName,
         admin: actor
       }), { parse_mode: 'HTML' });
+      await ctx.reply(`✅ Successfully unrestricted ${mentionUser(target)}.`, { parse_mode: 'HTML' });
       await writeLog(ctx, ctx.group, 'unmute', { targetId: target.id });
       return;
     }
@@ -519,7 +522,7 @@ module.exports = (bot) => {
 
     if (cmd === '.lock' || cmd === '.unlock') {
       const lock = (args[0] || '').toLowerCase();
-       const lockAll = lock === 'all';
+      const lockAll = lock === 'all';
       if (!lockAll && !supportedLocks.includes(lock)) return ctx.reply(commandUsage(cmd));
 
       const nextState = cmd === '.lock';
@@ -529,18 +532,17 @@ module.exports = (bot) => {
        nextLocks[lockType] = nextState;
       }
 
-      const permissions = lockAll && nextState
-        ? buildPermissionsFromLocks(Object.fromEntries(supportedLocks.map((item) => [item, true])))
-        : lockAll && !nextState
-          ? baseChatPermissions()
-          : buildPermissionsFromLocks(nextLocks);
+       if (lockAll) {
+        const permissions = nextState
+          ? buildPermissionsFromLocks(Object.fromEntries(supportedLocks.map((item) => [item, true])))
+          : baseChatPermissions();
 
-      const lockResult = await ctx.telegram.setChatPermissions(ctx.chat.id, permissions)
-        .then(() => ({ ok: true }))
-        .catch((error) => ({ ok: false, error }));
-
-      if (!lockResult.ok) {
-        return ctx.reply(`❌ ${nextState ? 'Lock' : 'Unlock'} failed: ${extractApiErrorMessage(lockResult.error)}`);
+        const lockResult = await ctx.telegram.setChatPermissions(ctx.chat.id, permissions)
+          .then(() => ({ ok: true }))
+          .catch((error) => ({ ok: false, error }));
+        if (!lockResult.ok) {
+          return ctx.reply(`❌ ${nextState ? 'Lock' : 'Unlock'} failed: ${extractApiErrorMessage(lockResult.error)}`);
+        }
       }
 
       ctx.group.locks = nextLocks;
