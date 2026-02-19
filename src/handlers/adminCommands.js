@@ -479,19 +479,36 @@ module.exports = (bot) => {
         { $inc: { warnings: 1 } },
         { upsert: true, new: true }
       );
-     await ctx.reply(styledActionMessage({
-        title: '⚠️ User Warned',
-        user: mentionUser(target),
-        chatName,
-        admin: actor,
-        detail: `📊 Warnings: ${user.warnings}/${defaultWarningLimit}`
-      }), { parse_mode: 'HTML' });
+     await ctx.reply([
+        '⚠️ User Warned',
+        `👤 User: ${mentionUser(target)}`,
+        `📊 Warnings: ${user.warnings}/${defaultWarningLimit}`,
+        `🛡 By: ${actor}`
+      ].join('\n'), { parse_mode: 'HTML' });
       await writeLog(ctx, ctx.group, 'warn', { targetId: target.id, reason: `Count ${user.warnings}` });
       if (user.warnings >= defaultWarningLimit) {
-        await ctx.banChatMember(target.id).catch(() => {});
-        await ctx.unbanChatMember(target.id).catch(() => {});
-        await User.updateOne({ chatId: ctx.chat.id, userId: target.id }, { warnings: 0 });
-        await ctx.reply(`🚨 ${mentionUser(target)} reached the warning limit and was removed.`, { parse_mode: 'HTML' });
+        const durationSeconds = 60 * 60;
+        const untilDate = Math.floor((Date.now() + durationSeconds * 1000) / 1000);
+        const muteResult = await ctx.restrictChatMember(target.id, { can_send_messages: false }, { until_date: untilDate })
+          .then(() => ({ ok: true }))
+          .catch((error) => ({ ok: false, error }));
+
+        if (!muteResult.ok) {
+          await ctx.reply(`❌ Auto-mute failed: ${extractApiErrorMessage(muteResult.error)}`);
+          return;
+        }
+
+        await User.updateOne(
+          { chatId: ctx.chat.id, userId: target.id },
+          { warnings: 0, mutedUntil: new Date(Date.now() + durationSeconds * 1000) }
+        );
+        await ctx.reply([
+          '🚫 User Auto Muted',
+          `👤 User: ${mentionUser(target)}`,
+          `⚠️ Warnings: ${defaultWarningLimit}/${defaultWarningLimit}`,
+          '⏱ Duration: 1 hour'
+        ].join('\n'), { parse_mode: 'HTML' });
+        await writeLog(ctx, ctx.group, 'warn_auto_mute', { targetId: target.id, reason: 'Reached warning limit' });
       }
       return;
     }
