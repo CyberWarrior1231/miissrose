@@ -18,8 +18,8 @@ function createBot() {
   bot.use(groupContext);
   bot.use(autoModeration);
 
-  registerPrivatePanelHandler(bot);
   registerRelayHandler(bot);
+  registerPrivatePanelHandler(bot);
   registerServiceHandler(bot);
   registerAdminCommands(bot);
   registerFilterHandler(bot);
