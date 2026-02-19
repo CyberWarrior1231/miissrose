@@ -7,6 +7,10 @@ const { defaultWarningLimit, captchaTimeoutSeconds } = require('../config');
 
 const supportedLocks = ['stickers', 'gifs', 'photos', 'videos', 'links', 'voice', 'documents', 'polls'];
 
+function escapeRegExp(input = '') {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function parseCommand(text = '') {
   const [cmd, ...args] = text.trim().split(/\s+/);
   return { cmd: cmd.toLowerCase(), args };
@@ -47,6 +51,82 @@ function styledActionMessage({ title, user, duration, chatName, admin, detail })
   return lines.join('\n');
 }
 
+function extractApiErrorMessage(error) {
+  return error?.response?.description || error?.description || error?.message || 'Unknown Telegram API error.';
+}
+
+function baseChatPermissions() {
+  return {
+    can_send_messages: true,
+    can_send_media_messages: true,
+    can_send_other_messages: true,
+    can_send_polls: true,
+    can_add_web_page_previews: true,
+    can_change_info: false,
+    can_invite_users: true,
+    can_pin_messages: false,
+    can_manage_topics: false,
+    can_send_audios: true,
+    can_send_documents: true,
+    can_send_photos: true,
+    can_send_videos: true,
+    can_send_video_notes: true,
+    can_send_voice_notes: true
+  };
+}
+
+function buildPermissionsFromLocks(locks = {}) {
+  const permissions = baseChatPermissions();
+
+  if (locks.links) {
+    permissions.can_add_web_page_previews = false;
+  }
+  if (locks.photos) {
+    permissions.can_send_photos = false;
+    permissions.can_send_media_messages = false;
+  }
+  if (locks.videos || locks.gifs) {
+    permissions.can_send_videos = false;
+    permissions.can_send_video_notes = false;
+    permissions.can_send_media_messages = false;
+  }
+  if (locks.voice) {
+    permissions.can_send_voice_notes = false;
+    permissions.can_send_audios = false;
+    permissions.can_send_media_messages = false;
+  }
+  if (locks.documents) {
+    permissions.can_send_documents = false;
+    permissions.can_send_media_messages = false;
+  }
+  if (locks.stickers) {
+    permissions.can_send_other_messages = false;
+  }
+  if (locks.polls) {
+    permissions.can_send_polls = false;
+  }
+
+  if (Object.values(locks).every(Boolean)) {
+    return {
+      ...permissions,
+      can_send_messages: false,
+      can_send_media_messages: false,
+      can_send_other_messages: false,
+      can_send_polls: false,
+      can_add_web_page_previews: false,
+      can_invite_users: false,
+      can_send_audios: false,
+      can_send_documents: false,
+      can_send_photos: false,
+      can_send_videos: false,
+      can_send_video_notes: false,
+      can_send_voice_notes: false
+    };
+  }
+
+  return permissions;
+}
+
 async function resolveTarget(ctx, args) {
   if (ctx.message.reply_to_message?.from) {
     return { target: ctx.message.reply_to_message.from, consumedArgs: 0 };
@@ -63,7 +143,25 @@ async function resolveTarget(ctx, args) {
   if (rawTarget.startsWith('@')) {
     const username = rawTarget.slice(1).toLowerCase();
     if (!username) return { target: null, consumedArgs: 0 };
-    const knownUser = await User.findOne({ chatId: ctx.chat.id, username: new RegExp(`^${username}$`, 'i') });
+    let resolvedFromApi = null;
+    try {
+      const apiUser = await ctx.telegram.getChat(`@${username}`);
+      if (apiUser?.id) {
+        resolvedFromApi = {
+          id: apiUser.id,
+          username: apiUser.username,
+          first_name: apiUser.first_name || apiUser.username || username
+        };
+      }
+    } catch {
+      // Fallback to local user registry if Telegram API cannot resolve this username.
+    }
+
+    if (resolvedFromApi) {
+      return { target: resolvedFromApi, consumedArgs: 1 };
+    }
+
+    const knownUser = await User.findOne({ chatId: ctx.chat.id, username: new RegExp(`^${escapeRegExp(username)}$`, 'i') });
     if (!knownUser) return { target: null, consumedArgs: 0 };
 
     return {
@@ -123,6 +221,17 @@ function commandUsage(cmd) {
   return usageMap[cmd] || 'Please check your command format and try again.';
 }
 
+function targetResolutionError(args = []) {
+  const raw = args[0] || '';
+  if (raw.startsWith('@')) {
+    return `❌ I couldn't resolve ${raw}.
+• Ensure the username is correct.
+• Ask the user to send a message in this group first.
+• Or use reply / numeric user ID.`;
+  }
+  return null;
+}
+
 async function ensureAdmin(ctx) {
   if (!(await isAdmin(ctx))) {
     await ctx.reply('⛔ You need admin rights in this group to use this command.');
@@ -166,14 +275,17 @@ module.exports = (bot) => {
     
     if (cmd === '.id') {
       const { target } = await resolveTarget(ctx, args);
+      const resolutionError = targetResolutionError(args);
+      if (!target && resolutionError) return ctx.reply(resolutionError);
       const subject = target || ctx.from;
       return ctx.reply(userInfoMessage(subject, ctx.chat), { parse_mode: 'HTML' });
     }
     
     if (cmd === '.ban') {
       const { target } = await resolveTarget(ctx, args);
-      if (!target) return ctx.reply(commandUsage(cmd));
-      await ctx.banChatMember(target.id).catch(() => {});
+      if (!target) return ctx.reply(targetResolutionError(args) || commandUsage(cmd));
+      const result = await ctx.banChatMember(target.id).then(() => ({ ok: true })).catch((error) => ({ ok: false, error }));
+      if (!result.ok) return ctx.reply(`❌ Ban failed: ${extractApiErrorMessage(result.error)}`);
       await ctx.reply(styledActionMessage({
         title: '🚫 User Banned',
         user: mentionUser(target),
@@ -186,8 +298,9 @@ module.exports = (bot) => {
 
     if (cmd === '.unban') {
       const { target } = await resolveTarget(ctx, args);
-      if (!target) return ctx.reply(commandUsage(cmd));
-      await ctx.unbanChatMember(target.id).catch(() => {});
+      if (!target) return ctx.reply(targetResolutionError(args) || commandUsage(cmd));
+      const result = await ctx.unbanChatMember(target.id).then(() => ({ ok: true })).catch((error) => ({ ok: false, error }));
+      if (!result.ok) return ctx.reply(`❌ Unban failed: ${extractApiErrorMessage(result.error)}`);
       await ctx.reply(styledActionMessage({
         title: '✅ User Unbanned',
         user: mentionUser(target),
@@ -216,8 +329,7 @@ module.exports = (bot) => {
     if (cmd === '.promote') {
       const { target, consumedArgs } = await resolveTarget(ctx, args);
       const role = args.slice(consumedArgs).join(' ') || undefined;
-      if (!target) return ctx.reply(commandUsage(cmd));
-
+      if (!target) return ctx.reply(targetResolutionError(args) || commandUsage(cmd));
       const promoted = await ctx.telegram.promoteChatMember(ctx.chat.id, target.id, {
         can_manage_chat: true,
         can_delete_messages: true,
@@ -229,7 +341,7 @@ module.exports = (bot) => {
         can_post_stories: true,
         can_edit_stories: true,
         can_delete_stories: true
-      }).then(() => true).catch(() => false);
+      }).then(() => ({ ok: true })).catch((error) => ({ ok: false, error }));
 
       if (!promoted) {
         return ctx.reply('⚠️ Promotion failed. Please check my admin rights and target validity.');
@@ -248,7 +360,7 @@ module.exports = (bot) => {
 
     if (cmd === '.demote') {
        const { target } = await resolveTarget(ctx, args);
-      if (!target) return ctx.reply(commandUsage(cmd));
+      if (!target) return ctx.reply(targetResolutionError(args) || commandUsage(cmd));
 
       const demoted = await ctx.telegram.promoteChatMember(ctx.chat.id, target.id, {
         can_manage_chat: false,
@@ -299,11 +411,19 @@ module.exports = (bot) => {
 
     if (cmd === '.mute') {
       const { target, consumedArgs } = await resolveTarget(ctx, args);
-      if (!target) return ctx.reply(commandUsage(cmd));
+      if (!target) return ctx.reply(targetResolutionError(args) || commandUsage(cmd));
       const duration = parseDuration(args[consumedArgs]);
       const untilDate = duration ? Math.floor((Date.now() + duration * 1000) / 1000) : 0;
 
       await ctx.restrictChatMember(target.id, { can_send_messages: false }, { until_date: untilDate }).catch(() => {});
+      const muteResult = await ctx.restrictChatMember(target.id, { can_send_messages: false }, { until_date: untilDate })
+        .then(() => ({ ok: true }))
+        .catch((error) => ({ ok: false, error }));
+
+      if (!muteResult.ok) {
+        return ctx.reply(`❌ Mute failed: ${extractApiErrorMessage(muteResult.error)}`);
+      }
+      
       await User.findOneAndUpdate(
         { chatId: ctx.chat.id, userId: target.id },
         { mutedUntil: duration ? new Date(Date.now() + duration * 1000) : null },
@@ -318,21 +438,21 @@ module.exports = (bot) => {
         admin: actor
       }), { parse_mode: 'HTML' });
       await writeLog(ctx, ctx.group, 'mute', { targetId: target.id, reason: duration ? `for ${duration}s` : 'indefinite' });
-      await ctx.reply('✅ Mute confirmed. Moderation action applied successfully.');
       return;
     }
 
     if (cmd === '.unmute') {
       const { target } = await resolveTarget(ctx, args);
-      if (!target) return ctx.reply(commandUsage(cmd));
+      if (!target) return ctx.reply(targetResolutionError(args) || commandUsage(cmd));
       
-      await ctx.restrictChatMember(target.id, {
-        can_send_messages: true,
-        can_send_other_messages: true,
-        can_send_polls: true,
-        can_add_web_page_previews: true,
-        can_invite_users: true
-      }).catch(() => {});
+      const unmuteResult = await ctx.restrictChatMember(target.id, baseChatPermissions())
+        .then(() => ({ ok: true }))
+        .catch((error) => ({ ok: false, error }));
+
+      if (!unmuteResult.ok) {
+        return ctx.reply(`❌ Unmute failed: ${extractApiErrorMessage(unmuteResult.error)}`);
+      }
+
       await User.findOneAndUpdate({ chatId: ctx.chat.id, userId: target.id }, { mutedUntil: null }, { upsert: true });
 
       await ctx.reply(styledActionMessage({
@@ -342,13 +462,12 @@ module.exports = (bot) => {
         admin: actor
       }), { parse_mode: 'HTML' });
       await writeLog(ctx, ctx.group, 'unmute', { targetId: target.id });
-      await ctx.reply('✅ Unmute confirmed. User can speak again.');
       return;
     }
 
     if (cmd === '.warn') {
       const { target } = await resolveTarget(ctx, args);
-      if (!target) return ctx.reply(commandUsage(cmd));
+      if (!target) return ctx.reply(targetResolutionError(args) || commandUsage(cmd));
       const user = await User.findOneAndUpdate(
         { chatId: ctx.chat.id, userId: target.id },
         { $inc: { warnings: 1 } },
@@ -373,7 +492,7 @@ module.exports = (bot) => {
 
     if (cmd === '.warnings') {
       const { target } = await resolveTarget(ctx, args);
-      if (!target) return ctx.reply(commandUsage(cmd));
+      if (!target) return ctx.reply(targetResolutionError(args) || commandUsage(cmd));
       const user = await User.findOne({ chatId: ctx.chat.id, userId: target.id });
       return ctx.reply(`📊 Warnings for ${mentionUser(target)}: ${user?.warnings || 0}/${defaultWarningLimit}`, { parse_mode: 'HTML' });
     }
@@ -405,9 +524,26 @@ module.exports = (bot) => {
 
       const nextState = cmd === '.lock';
       const targets = lockAll ? supportedLocks : [lock];
+      const nextLocks = { ...ctx.group.locks };
       for (const lockType of targets) {
-        ctx.group.locks[lockType] = nextState;
+       nextLocks[lockType] = nextState;
       }
+
+      const permissions = lockAll && nextState
+        ? buildPermissionsFromLocks(Object.fromEntries(supportedLocks.map((item) => [item, true])))
+        : lockAll && !nextState
+          ? baseChatPermissions()
+          : buildPermissionsFromLocks(nextLocks);
+
+      const lockResult = await ctx.telegram.setChatPermissions(ctx.chat.id, permissions)
+        .then(() => ({ ok: true }))
+        .catch((error) => ({ ok: false, error }));
+
+      if (!lockResult.ok) {
+        return ctx.reply(`❌ ${nextState ? 'Lock' : 'Unlock'} failed: ${extractApiErrorMessage(lockResult.error)}`);
+      }
+
+      ctx.group.locks = nextLocks;
       await ctx.group.save();
       await ctx.reply(styledActionMessage({
         title: `${nextState ? '🔒 Lock Enabled' : '🔓 Lock Disabled'}`,
