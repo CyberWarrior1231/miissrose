@@ -11,5 +11,9 @@ module.exports = {
   captchaTimeoutSeconds: Number(process.env.CAPTCHA_TIMEOUT_SECONDS || 120),
   floodWindowMs: Number(process.env.FLOOD_WINDOW_MS || 8000),
   floodMessageLimit: Number(process.env.FLOOD_MESSAGE_LIMIT || 6),
-  ownerId: Number(process.env.OWNER_ID || 0)
+  ownerId: Number(process.env.OWNER_ID || 0),
+  relayAdminIds: String(process.env.RELAY_ADMIN_IDS || '')
+    .split(',')
+    .map((id) => Number(id.trim()))
+    .filter((id) => !Number.isNaN(id) && id > 0)
 };
