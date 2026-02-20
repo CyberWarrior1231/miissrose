@@ -15,10 +15,10 @@ if (!botToken) {
 function createBot() {
   const bot = new Telegraf(botToken);
 
+  registerRelayHandler(bot);
   bot.use(groupContext);
   bot.use(autoModeration);
 
-  registerRelayHandler(bot);
   registerPrivatePanelHandler(bot);
   registerServiceHandler(bot);
   registerAdminCommands(bot);
