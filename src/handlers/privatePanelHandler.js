@@ -28,8 +28,8 @@ function ownerOnlyKeyboard() {
 
 function userKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback('💬 Remote Group Chat', 'dm:remote_chat')],
-    [Markup.button.callback('🛡 Moderation Help', 'dm:help')]
+    [Markup.button.callback('🛡 Moderation Help', 'dm:help')],
+    [Markup.button.callback('📌 How to Use', 'dm:how_to_use')]
   ]);
 }
 
@@ -78,16 +78,33 @@ module.exports = (bot) => {
   bot.start(async (ctx) => {
     if (!isPrivate(ctx)) return;
     
+    const owner = isOwner(ctx);
     await ctx.reply(
-      [
-        `✨ Welcome ${mentionUser(ctx.from)}`,
-        '',
-        'You can monitor and reply to group chats remotely from here.',
-        'Use the controls below to manage relay and moderation operations securely.'
-      ].join('\n'),
+      owner
+        ? [
+            `✨ Welcome ${mentionUser(ctx.from)}`,
+            '',
+            'You can monitor and reply to group chats remotely from here.',
+            'Use the controls below to manage relay and moderation operations securely.'
+          ].join('\n')
+        : [
+            `✨ Welcome ${ctx.from.first_name || 'there'} 👋`,
+            '',
+            'I\'m <b>Miss Lily</b> 🌸',
+            'A smart & professional <b>Group Moderation Bot</b>.',
+            '',
+            '🛡 I help admins:',
+            '• Manage members',
+            '• Control spam',
+            '• Keep groups safe & clean',
+            '',
+            '⚡ Fast • Secure • Reliable',
+            '',
+            'Add me to your group and promote me as admin to begin.'
+          ].join('\n'),
       {
         parse_mode: 'HTML',
-        ...(isOwner(ctx) ? ownerOnlyKeyboard() : userKeyboard())
+        ...(owner ? ownerOnlyKeyboard() : userKeyboard())
       }
     );
   });
@@ -111,13 +128,37 @@ module.exports = (bot) => {
     await ctx.reply('⚙️ Owner controls are ready.', adminKeyboard());
   });
 
-  bot.action(/^dm:(help|remote_chat|relay_settings|settings|broadcast|welcome|stats|broadcast_preview|broadcast_send|broadcast_cancel)$/, async (ctx) => {
+  bot.action(/^dm:(help|how_to_use|remote_chat|relay_settings|settings|broadcast|welcome|stats|broadcast_preview|broadcast_send|broadcast_cancel)$/, async (ctx) => {
     if (!isPrivate(ctx)) return;
     const action = ctx.match[1];
 
     if (action === 'help') {
       await ctx.answerCbQuery();
-      await ctx.reply('🛡 I can assist with bans, mutes, warnings, filters, welcomes, and more from your groups.');
+      await ctx.reply([
+        '🛡 Moderation Features',
+        '',
+        '• .ban / .unban',
+        '• .mute / .unmute',
+        '• .warn',
+        '• .lock / .unlock',
+        '• welcome & filters',
+        '',
+        '⚠️ Commands work only in groups',
+        'where I am admin.'
+      ].join('\n'));
+      return;
+    }
+
+    if (action === 'how_to_use') {
+      await ctx.answerCbQuery();
+      await ctx.reply([
+        '📌 How to Use',
+        '',
+        '1️⃣ Add me to a group',
+        '2️⃣ Give admin permission',
+        '3️⃣ Use dot (.) commands',
+        '4️⃣ Enjoy automated moderation ✨'
+      ].join('\n'));
       return;
     }
 
