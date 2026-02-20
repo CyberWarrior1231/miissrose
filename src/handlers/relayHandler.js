@@ -7,6 +7,10 @@ function isGroupChat(ctx) {
   return ['group', 'supergroup'].includes(ctx.chat?.type);
 }
 
+function isPrivateChat(ctx) {
+  return ctx.chat?.type === 'private';
+}
+
 function relayRecipients() {
   const recipients = new Set();
   if (ownerId) recipients.add(ownerId);
@@ -46,6 +50,11 @@ async function mirrorGroupMessage(ctx) {
   const settings = await getRelaySettings();
   if (!settings.enabled || !ctx.message) return;
 
+  const chatIsGroup = isGroupChat(ctx);
+  const privateRelayEnabled = settings.mode === 'private';
+  const shouldRelay = chatIsGroup || (privateRelayEnabled && isPrivateChat(ctx));
+  if (!shouldRelay) return;
+  
   const targets = settings.mode === 'channel' && settings.channelId ? [settings.channelId] : relayRecipients();
   if (!targets.length) return;
 
