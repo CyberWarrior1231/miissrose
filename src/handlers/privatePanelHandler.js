@@ -74,6 +74,18 @@ function formatWelcomePreview(template, user, groupTitle) {
     .replaceAll('{user}', mentionUser(user));
 }
 
+function detectBroadcastType(message = {}) {
+  if (typeof message.text === 'string' && message.text.trim()) return 'text';
+  if (message.photo) return 'photo';
+  if (message.video) return 'video';
+  if (message.document) return 'document';
+  if (message.audio) return 'audio';
+  if (message.voice) return 'voice';
+  if (message.sticker) return 'sticker';
+  if (message.animation) return 'animation';
+  return null;
+}
+
 module.exports = (bot) => {
   bot.start(async (ctx) => {
     if (!isPrivate(ctx)) return;
@@ -244,7 +256,11 @@ module.exports = (bot) => {
         return;
       }
       await ctx.reply('👀 Broadcast Preview');
-      await ctx.reply(state.broadcastDraft);
+      if (state.broadcastDraft.type === 'text') {
+        await ctx.reply(state.broadcastDraft.text);
+      } else {
+        await ctx.telegram.forwardMessage(ctx.from.id, state.broadcastDraft.chatId, state.broadcastDraft.messageId);
+      }
       return;
     }
 
@@ -266,7 +282,10 @@ module.exports = (bot) => {
       let delivered = 0;
       for (const chatId of state.allGroupIds || []) {
         // eslint-disable-next-line no-await-in-loop
-        const sent = await ctx.telegram.sendMessage(chatId, state.broadcastDraft).then(() => true).catch(() => false);
+        const sent = await (state.broadcastDraft.type === 'text'
+          ? ctx.telegram.sendMessage(chatId, state.broadcastDraft.text)
+          : ctx.telegram.forwardMessage(chatId, state.broadcastDraft.chatId, state.broadcastDraft.messageId)
+        ).then(() => true).catch(() => false);
         if (sent) delivered += 1;
       }
 
@@ -276,7 +295,7 @@ module.exports = (bot) => {
     }
   });
 
-  bot.on('text', async (ctx, next) => {
+  bot.on('message', async (ctx, next) => {
     if (!isPrivate(ctx)) return next();
 
     const state = dmState.get(ctx.from.id);
@@ -289,7 +308,7 @@ module.exports = (bot) => {
     }
 
     if (state.mode === 'await_welcome') {
-      const template = ctx.message.text.trim();
+      const template = (ctx.message.text || '').trim();
       if (!template) {
         await ctx.reply('⚠️ Please send a welcome message.');
         return;
@@ -308,13 +327,21 @@ module.exports = (bot) => {
     }
 
     if (state.mode === 'await_broadcast') {
-      const message = ctx.message.text.trim();
-      if (!message) {
-        await ctx.reply('⚠️ Please send a valid message.');
+      const type = detectBroadcastType(ctx.message);
+      if (!type) {
+        await ctx.reply('⚠️ Please send text, photo, video, document, audio, voice, sticker, or animation.');
         return;
       }
 
-      dmState.set(ctx.from.id, { ...state, broadcastDraft: message });
+       dmState.set(ctx.from.id, {
+        ...state,
+        broadcastDraft: {
+          type,
+          text: type === 'text' ? ctx.message.text.trim() : undefined,
+          chatId: ctx.chat.id,
+          messageId: ctx.message.message_id
+        }
+      });
       await ctx.reply('✅ Draft saved. You can preview, send, or cancel.', broadcastDraftKeyboard());
       return;
     }
