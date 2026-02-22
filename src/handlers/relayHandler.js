@@ -109,18 +109,8 @@ async function mirrorGroupMessage(ctx) {
   const targets = settings.mode === 'channel' && settings.channelId ? [settings.channelId] : relayRecipients();
   if (!targets.length) return;
 
-  const relayHeader = buildRelayHeader(ctx);
-  const relayLine = buildRelayLine(ctx);
-  const currentGroupId = ctx.chat?.id;
-  
   for (const targetId of targets) {
-    if (lastRelayGroupByTarget.get(targetId) !== currentGroupId) {
-      // eslint-disable-next-line no-await-in-loop
-      await ctx.telegram.sendMessage(targetId, relayHeader).catch(() => null);
-      lastRelayGroupByTarget.set(targetId, currentGroupId);
-    }
-   
-    // eslint-disable-next-line no-await-in-loop
+     // eslint-disable-next-line no-await-in-loop
     const forwarded = await ctx.telegram.forwardMessage(targetId, ctx.chat.id, ctx.message.message_id).catch(() => null);
     // eslint-disable-next-line no-await-in-loop
     await storeRelayMapping(forwarded, ctx.chat.id, ctx.message.message_id);
