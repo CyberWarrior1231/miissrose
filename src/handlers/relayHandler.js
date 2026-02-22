@@ -46,6 +46,25 @@ async function storeRelayMapping(forwarded, sourceChatId, sourceMessageId) {
   ).catch(() => {});
 }
 
+function buildRelayHeader(ctx) {
+  const groupTitle = ctx.chat?.title
+    || [ctx.chat?.first_name, ctx.chat?.last_name].filter(Boolean).join(' ')
+    || 'Unknown Group';
+  const groupId = ctx.chat?.id || 'Unknown';
+  const firstName = ctx.from?.first_name || 'Unknown';
+  const username = ctx.from?.username ? ` (@${ctx.from.username})` : '';
+  const userId = ctx.from?.id || 'Unknown';
+
+  return [
+    '━━━━━━━━━━━━━━',
+    `📍 Group: ${groupTitle}`,
+    `🆔 Group ID: ${groupId}`,
+    `👤 Sender: ${firstName}${username}`,
+    `🆔 User ID: ${userId}`,
+    '━━━━━━━━━━━━━━'
+  ].join('\n');
+}
+
 async function mirrorGroupMessage(ctx) {
   const settings = await getRelaySettings();
   if (!settings.enabled || !ctx.message) return;
@@ -58,7 +77,11 @@ async function mirrorGroupMessage(ctx) {
   const targets = settings.mode === 'channel' && settings.channelId ? [settings.channelId] : relayRecipients();
   if (!targets.length) return;
 
+  const relayHeader = buildRelayHeader(ctx);
+
   for (const targetId of targets) {
+    // eslint-disable-next-line no-await-in-loop
+    await ctx.telegram.sendMessage(targetId, relayHeader).catch(() => null);
     // eslint-disable-next-line no-await-in-loop
     const forwarded = await ctx.telegram.forwardMessage(targetId, ctx.chat.id, ctx.message.message_id).catch(() => null);
     // eslint-disable-next-line no-await-in-loop
