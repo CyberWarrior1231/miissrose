@@ -46,23 +46,55 @@ async function storeRelayMapping(forwarded, sourceChatId, sourceMessageId) {
   ).catch(() => {});
 }
 
+const lastRelayGroupByTarget = new Map();
+
 function buildRelayHeader(ctx) {
   const groupTitle = ctx.chat?.title
     || [ctx.chat?.first_name, ctx.chat?.last_name].filter(Boolean).join(' ')
     || 'Unknown Group';
   const groupId = ctx.chat?.id || 'Unknown';
-  const firstName = ctx.from?.first_name || 'Unknown';
-  const username = ctx.from?.username ? ` (@${ctx.from.username})` : '';
-  const userId = ctx.from?.id || 'Unknown';
+   return `📍 ${groupTitle} (${groupId})`;
+}
 
-  return [
-    '━━━━━━━━━━━━━━',
-    `📍 Group: ${groupTitle}`,
-    `🆔 Group ID: ${groupId}`,
-    `👤 Sender: ${firstName}${username}`,
-    `🆔 User ID: ${userId}`,
-    '━━━━━━━━━━━━━━'
-  ].join('\n');
+function senderName(ctx) {
+  return [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(' ')
+    || (ctx.from?.username ? `@${ctx.from.username}` : 'Unknown');
+}
+
+function messageBody(ctx) {
+  return (ctx.message?.text || ctx.message?.caption || '').trim() || '[Non-text message]';
+}
+
+function hasBotMention(ctx) {
+  const entities = [
+    ...(ctx.message?.entities || []),
+    ...(ctx.message?.caption_entities || [])
+  ];
+  const text = ctx.message?.text || ctx.message?.caption || '';
+  const botUsername = ctx.botInfo?.username;
+
+  return entities.some((entity) => {
+    if (entity.type === 'text_mention') {
+      return entity.user?.id === ctx.botInfo?.id;
+    }
+
+    if (entity.type === 'mention' && botUsername) {
+      const mention = text.slice(entity.offset, entity.offset + entity.length);
+      return mention.toLowerCase() === `@${botUsername.toLowerCase()}`;
+    }
+
+    return false;
+  });
+}
+
+function messagePrefix(ctx) {
+  if (ctx.message?.reply_to_message?.from?.id === ctx.botInfo?.id) return '↩️ Reply to bot\n';
+  if (hasBotMention(ctx)) return '🔔 Bot mentioned\n';
+  return '';
+}
+
+function buildRelayLine(ctx) {
+  return `${messagePrefix(ctx)}${senderName(ctx)}: ${messageBody(ctx)}`;
 }
 
 async function mirrorGroupMessage(ctx) {
@@ -78,10 +110,18 @@ async function mirrorGroupMessage(ctx) {
   if (!targets.length) return;
 
   const relayHeader = buildRelayHeader(ctx);
-
+  const relayLine = buildRelayLine(ctx);
+  const currentGroupId = ctx.chat?.id;
+  
   for (const targetId of targets) {
+    if (lastRelayGroupByTarget.get(targetId) !== currentGroupId) {
+      // eslint-disable-next-line no-await-in-loop
+      await ctx.telegram.sendMessage(targetId, relayHeader).catch(() => null);
+      lastRelayGroupByTarget.set(targetId, currentGroupId);
+    }
+   
     // eslint-disable-next-line no-await-in-loop
-    await ctx.telegram.sendMessage(targetId, relayHeader).catch(() => null);
+    await ctx.telegram.sendMessage(targetId, relayLine).catch(() => null);
     // eslint-disable-next-line no-await-in-loop
     const forwarded = await ctx.telegram.forwardMessage(targetId, ctx.chat.id, ctx.message.message_id).catch(() => null);
     // eslint-disable-next-line no-await-in-loop
