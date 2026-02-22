@@ -86,6 +86,10 @@ function shouldSendRelayHeader(ctx, targetId) {
   return lastGroupId !== currentGroupId || isReplyToBot || botMentioned;
 }
 
+function isReplyToThisBot(ctx) {
+  return ctx.message?.reply_to_message?.from?.id === ctx.botInfo?.id;
+}
+
 async function mirrorGroupMessage(ctx) {
   const settings = await getRelaySettings();
   if (!settings.enabled || !ctx.message) return;
@@ -102,7 +106,12 @@ async function mirrorGroupMessage(ctx) {
     if (shouldSendRelayHeader(ctx, targetId)) {
       // eslint-disable-next-line no-await-in-loop
       await ctx.telegram.sendMessage(targetId, buildRelayHeader(ctx)).catch(() => null);
-    } 
+    }
+
+    if (isReplyToThisBot(ctx)) {
+      // eslint-disable-next-line no-await-in-loop
+      await ctx.telegram.sendMessage(targetId, '↩️ Reply to bot').catch(() => null);
+    }
     
     // eslint-disable-next-line no-await-in-loop
     const forwarded = await ctx.telegram.forwardMessage(targetId, ctx.chat.id, ctx.message.message_id).catch(() => null);
