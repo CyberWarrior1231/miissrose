@@ -121,8 +121,6 @@ async function mirrorGroupMessage(ctx) {
     }
    
     // eslint-disable-next-line no-await-in-loop
-    await ctx.telegram.sendMessage(targetId, relayLine).catch(() => null);
-    // eslint-disable-next-line no-await-in-loop
     const forwarded = await ctx.telegram.forwardMessage(targetId, ctx.chat.id, ctx.message.message_id).catch(() => null);
     // eslint-disable-next-line no-await-in-loop
     await storeRelayMapping(forwarded, ctx.chat.id, ctx.message.message_id);
