@@ -51,18 +51,8 @@ const lastRelayGroupByTarget = new Map();
 function buildRelayHeader(ctx) {
   const groupTitle = ctx.chat?.title
     || [ctx.chat?.first_name, ctx.chat?.last_name].filter(Boolean).join(' ')
-    || 'Unknown Group';
-  const groupId = ctx.chat?.id || 'Unknown';
-   return `📍 ${groupTitle} (${groupId})`;
-}
-
-function senderName(ctx) {
-  return [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(' ')
-    || (ctx.from?.username ? `@${ctx.from.username}` : 'Unknown');
-}
-
-function messageBody(ctx) {
-  return (ctx.message?.text || ctx.message?.caption || '').trim() || '[Non-text message]';
+    || (ctx.chat?.id ? `Group ${ctx.chat.id}` : 'Unknown Group');
+  return `📍 ${groupTitle}`;
 }
 
 function hasBotMention(ctx) {
@@ -87,14 +77,13 @@ function hasBotMention(ctx) {
   });
 }
 
-function messagePrefix(ctx) {
-  if (ctx.message?.reply_to_message?.from?.id === ctx.botInfo?.id) return '↩️ Reply to bot\n';
-  if (hasBotMention(ctx)) return '🔔 Bot mentioned\n';
-  return '';
-}
+function shouldSendRelayHeader(ctx, targetId) {
+  const lastGroupId = lastRelayGroupByTarget.get(targetId);
+  const currentGroupId = ctx.chat?.id;
+  const isReplyToBot = ctx.message?.reply_to_message?.from?.id === ctx.botInfo?.id;
+  const botMentioned = hasBotMention(ctx);
 
-function buildRelayLine(ctx) {
-  return `${messagePrefix(ctx)}${senderName(ctx)}: ${messageBody(ctx)}`;
+  return lastGroupId !== currentGroupId || isReplyToBot || botMentioned;
 }
 
 async function mirrorGroupMessage(ctx) {
@@ -110,8 +99,16 @@ async function mirrorGroupMessage(ctx) {
   if (!targets.length) return;
 
   for (const targetId of targets) {
-     // eslint-disable-next-line no-await-in-loop
+    if (shouldSendRelayHeader(ctx, targetId)) {
+      // eslint-disable-next-line no-await-in-loop
+      await ctx.telegram.sendMessage(targetId, buildRelayHeader(ctx)).catch(() => null);
+    } 
+    
+    // eslint-disable-next-line no-await-in-loop
     const forwarded = await ctx.telegram.forwardMessage(targetId, ctx.chat.id, ctx.message.message_id).catch(() => null);
+    if (forwarded) {
+      lastRelayGroupByTarget.set(targetId, ctx.chat.id);
+    }
     // eslint-disable-next-line no-await-in-loop
     await storeRelayMapping(forwarded, ctx.chat.id, ctx.message.message_id);
   }
